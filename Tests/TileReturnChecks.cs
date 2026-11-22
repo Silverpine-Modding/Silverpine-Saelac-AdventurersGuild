@@ -88,7 +88,12 @@ internal static class TileReturnChecks
     private static void CheckSceneryRestore()
     {
         var native=Traverse.Create(typeof(RandomSprite)).Field("forceDictionary").GetValue<Dictionary<Vector2Int,RandomSprite>>();
-        var original=native.Values.First(s=>s && !ObjectPool.IsObjectPoolTarget(s.gameObject) && SerializationManager.GetAssociatedPrefab(s.gameObject));
+        // The starting town may have no naturally spawned, non-pooled propagating scenery.
+        var prefabs=Traverse.Create(typeof(SerializationManager)).Field("prefabs").GetValue<Dictionary<string,GameObject>>();
+        var scenery=prefabs.Values.First(p=>p && p.TryGetComponent<RandomSprite>(out var sprite) &&
+            Traverse.Create(sprite).Field("forcePropagation").GetValue<bool>());
+        var empty=Expeditions.Spaces(Player.Instance.transform.GetVector2IntPosition(),Vector2Int.zero,9).First(p=>!native.ContainsKey(p));
+        var original=Object.Instantiate(scenery,new Vector3(empty.x,empty.y,0),Quaternion.identity).GetComponent<RandomSprite>();
         var cell=original.transform.GetVector2IntPosition();
         var record=SerializationManager.SerializeSerializable(new[]{original.gameObject});
         RandomSprite Restore() => SerializationManager.DeserializeSerializable(record).Single().GetComponent<RandomSprite>();
@@ -101,6 +106,7 @@ internal static class TileReturnChecks
         original.gameObject.SetActive(true);
         Object.DestroyImmediate(second.gameObject);
         Runner.Verify(native[cell]==original,"Reactivated scenery remains registered after the restored object unloads");
+        Object.DestroyImmediate(original.gameObject);
 
         var prefab=SerializationManager.GetPrefabFromName("prefab_enemy_cultist");
         var ordinary=Object.Instantiate(prefab);

@@ -2,13 +2,67 @@
 
 A BepInEx plugin for Silverpine. Silverpine Modding Tools supplies the in-game menu, conversation actions, and prefab save support. Companion Party optionally gives named adventurers personal rewards and combat on loaded tiles. [Companion Party releases](https://github.com/Silverpine-Modding/Silverpine-Saelac-CompanionParty/releases/latest)
 
-Version **1.5.2**, by **Saelac and ChatGPT**. [Download the latest release](https://github.com/Silverpine-Modding/Silverpine-Saelac-AdventurersGuild/releases/latest)
+Version **1.7.0**, by **Saelac and ChatGPT**. [Download the latest release](https://github.com/Silverpine-Modding/Silverpine-Saelac-AdventurersGuild/releases/latest)
+
+## Guild ranks
+
+Thena describes Silverpine as a branch of the Thalassar Adventuring Guild. The board follows her public ranks. Open **Journal** to see your standing. Each notice lists the rank needed to sign and the merit it pays. The representative records the merit when you collect your reward.
+
+| Rank | Promotion | Examples | Merit per completion |
+| --- | --- | --- | --- |
+| Beginner | Starting rank | Small supply orders, local parcels, nearby weak monsters | 2 |
+| Intermediate | 8 total merit | Longer routes, medium supply orders, nearby cultists | 4 |
+| Veteran | 24 total merit | Distant escorts and rescues, remote hunts, large supply orders | 7 |
+
+Supply difficulty follows the requested quantity. Up to 7 items qualify as Beginner, 8–19 as Intermediate and 20 or more as Veteran. As you advance, the board can post larger orders alongside the small ones. Travel difficulty counts world-map borders from Silverpine. Four crossings normally require Intermediate and seven require Veteran. Escorts and rescues count two extra crossings. A cultist counts three extra crossings and requires at least Intermediate. The guild fixes the grade at posting time. A player's rank governs their own signatures. Hiring adventurers or funding a commission earns the player no merit.
+
+<details><summary>Hidden guild distinction</summary>
+
+Thena's fourth rank is **Hero**. The representative awards it at 50 total merit with at least three paid Veteran completions. Veterans already have access to the most difficult public notices.
+
+</details>
+
+Older worlds receive credit for previously paid player contracts in their ledger. Players can finish work they signed before the update, at any rank.
+
+## Skills mod integration
+
+Reference `AdventurersGuild.dll` and use the public `AdventurersGuild.GuildApi`. A small BepInEx bridge can depend on both mods so each main mod works alone. The guild plugin GUID is `silverpine.adventurersguild`. Use version 1.7.0 or later. Subscribe once on plugin load and unsubscribe on unload. Call the API on Unity's game thread.
+
+| Hook | When it runs |
+| --- | --- |
+| `GuildApi.PlayerStanding` | Returns the loaded world's standing, or null outside a playable world with a charter. |
+| `PlayerSigning` | Each provider receives a read-only `GuildQuest` and returns a `GuildSkillBonus` in extra gold and merit. Read skill levels here. |
+| `PlayerAccepted` | The player's signature and final terms have been recorded. |
+| `PlayerCompleted` | The guild has paid the player and credited their merit. Grant work-specific skill XP here. |
+| `PlayerPromoted` | Follows completion when the player advances. The receipt includes the new standing. |
+
+For example, a skills bridge can register these handlers. The two skill functions in the example belong to the consuming mod.
+
+```csharp
+using AdventurersGuild;
+
+// Subscribe in Awake and remove both handlers in OnDestroy.
+GuildApi.PlayerSigning += SigningBonus;
+GuildApi.PlayerCompleted += GrantExperience;
+
+static GuildSkillBonus SigningBonus(GuildQuest quest) =>
+    quest.Objective == Work.Procurement && GetGatheringLevel() >= 5
+        ? new GuildSkillBonus(gold: 4, merit: 1)
+        : default;
+
+static void GrantExperience(GuildQuest receipt) =>
+    AwardSkillXpOnce(receipt.Id, receipt.Objective, receipt.Merit);
+```
+
+Snapshots include the contract ID, objective, issuer and beneficiary keys, supply or quarry, quantity, required rank, base gold, bonus gold, total merit and the player's standing. Bonuses add across providers. The guild reserves up to half the posted gold from its available treasury, and providers can add up to the contract's base merit. The signed terms survive removing the skills mod. Completion and promotion events fire for successful player payouts. Loading a save does not replay them. Store XP receipts by contract ID alongside the same world save if the skills mod persists XP separately.
 
 ## Installation
 
-Install BepInEx 5 and Silverpine Modding Tools 1.13.0 or later. With Silverpine closed, extract `AdventurersGuild-1.5.2.zip` into the game directory. For a manual installation, place `AdventurersGuild.dll` in `BepInEx/plugins/AdventurersGuild/`. Start the game and open the charter to appoint a representative. [Silverpine Modding Tools releases](https://github.com/Silverpine-Modding/Silverpine-Saelac-Modding-Tools/releases/latest)
+Install BepInEx 5 and Silverpine Modding Tools 1.13.0 or later. With Silverpine closed, extract the release ZIP into the game directory. For a manual installation, place `AdventurersGuild.dll` in `BepInEx/plugins/AdventurersGuild/`. Start the game and open the charter to appoint a representative. [Silverpine Modding Tools releases](https://github.com/Silverpine-Modding/Silverpine-Saelac-Modding-Tools/releases/latest)
 
 ## Start a guild
+
+In **Charter**, search for a resident and click **Quest giver** or **Quest target** to toggle that role. A target can receive goods or parcels, be escorted, or be named in a rescue notice. Acacia starts blocked in both roles. Enrollment as an adventurer is a separate choice. Each world remembers its settings, including an explicit decision to allow Acacia. Blocking a role withdraws affected unclaimed notices. At the counter, open **Journal** to reclaim the gold and bonus item from a withdrawn player commission. Signed contracts can still be completed.
 
 Open **Inventory → Mods → Adventurers’ Guild → Charter** in a loaded world. Appoint a representative and enroll any residents you want available for assignments. **Mixed** gives enrolled residents the first opportunity and lets simulated adventurers take unreserved postings later. **Named** and **Simulated** limit new claims to the selected roster. Retiring a resident lets them finish their current assignment. You can change the representative while other members are away.
 

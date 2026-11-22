@@ -44,7 +44,7 @@ def run():
     patchers.mkdir(exist_ok=True)
     shutil.copy2(isolation/"bin/Release/netstandard2.1/QuitToMenuTestIsolation.dll",patchers)
     (directory/"Silverpine_Data/StreamingAssets").mkdir(exist_ok=True)
-    for mode in ("escort-return","guild-conversation","guild-board","standalone","companion","menu-lifecycle","structure-import"):
+    for mode in ("guild-ranks","role-exclusions","escort-return","guild-conversation","guild-board","standalone","companion","menu-lifecycle","structure-import"):
         if len(sys.argv)>1 and mode not in sys.argv[1:]: continue
         optional = (
             (PROJECT.parent/"CompanionParty/bin/Release/netstandard2.1/CompanionParty.dll", mode in ("companion","menu-lifecycle")),
@@ -60,7 +60,7 @@ def run():
         report.unlink(missing_ok=True)
         env=os.environ.copy()
         cmd=[str(directory/"Silverpine.exe"),"-batchmode","-logFile",str(directory/"unity.log")]
-        if mode in ("guild-board","guild-conversation","menu-lifecycle"):
+        if mode in ("guild-board","guild-conversation","menu-lifecycle","role-exclusions","guild-ranks"):
             cmd.extend(["-guild-lifecycle" if mode=="menu-lifecycle" else "-"+mode,"-screen-width","1280","-screen-height","800","-screen-fullscreen","0"])
         else: cmd.append("-nographics")
         if mode=="structure-import": cmd.append("-guild-structure-import")

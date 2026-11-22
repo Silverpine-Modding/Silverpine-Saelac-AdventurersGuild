@@ -31,7 +31,7 @@ internal static partial class Expeditions
         var offers = c.Jobs.Where(j => j.Stage == Stage.Offered).ToArray();
         bool Protect(Contract j) => !j.Funded && j.Work != Work.Rescue && j.Reserved == null;
         int choices = offers.Count(j => Protect(j) && Guild.Eligible(j,Guild.PlayerId));
-        bool Available(Contract j) => !Protect(j) || choices > 2;
+        bool Available(Contract j) => !Protect(j) || choices > 2 || c.Standing.Rank<GuildRanks.Requirement(j);
         var pending = offers.FirstOrDefault(j => j.Applicant != null);
         if (pending != null)
         {

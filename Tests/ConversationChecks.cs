@@ -100,6 +100,7 @@ internal static class ConversationChecks
         var original=Guild.Offer(Work.Survey,tile,null,1,20,Guild.GuildId,Guild.GuildId);
         original.Stage=Stage.Stranded; original.Worker="custom:Nessa"; original.WorkerName="Nessa";
         var rescue=Guild.Offer(Work.Rescue,tile,null,1,25,Guild.GuildId,original.Worker);
+        c.PlayerMerit=24; // The dialogue fixture can sign a remote rescue.
         rescue.Patient=original.Worker; rescue.RecipientName=original.WorkerName; rescue.Parent=original.Id;
         c.Jobs.InsertRange(0,new[]{original,rescue});
         var distractions=Enumerable.Range(0,7).Select(i=>{

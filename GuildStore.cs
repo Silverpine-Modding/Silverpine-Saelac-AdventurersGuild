@@ -23,6 +23,9 @@ public sealed class Contract
     public Stage Stage;
     public int Gold, Quantity = 1, Progress, Created, Due, NextWork, X, Y, Remaining;
     public int NextGather, GatherInterval;
+    public GuildRank? RequiredRank;
+    public int SkillGold, SkillMerit;
+    internal int Payout => Gold+SkillGold;
     public bool Reported, Paid, Trouble, ParcelCollected;
     public List<string> Events = new();
     public List<string> Cargo = new();
@@ -43,7 +46,7 @@ public sealed class Contract
             ? (Stage == Stage.Offered ? "Nobody has taken the request yet." : "It closed without a claimant.")
             : WorkerName + " accepted the contract.";
         string outcome = Paid ? " The guild paid the reward." : Stage == Stage.Failed ? " The assignment failed." : "";
-        return $"{RequestDescription()} The reward was {Gold} gold. {claim}{outcome}";
+        return $"{RequestDescription()} The reward was {Payout} gold. {claim}{outcome}";
     }
     public string Title => Work switch
     {
@@ -62,10 +65,35 @@ public sealed class Charter
     public string Representative;
     public Roster Roster;
     public HashSet<string> Members = new();
+    // Replace the defaults on load so explicitly allowing Acacia survives a round trip.
+    [JsonProperty(ObjectCreationHandling=ObjectCreationHandling.Replace,NullValueHandling=NullValueHandling.Ignore)]
+    public HashSet<string> BlockedGivers = new() { "npc:Acacia" };
+    [JsonProperty(ObjectCreationHandling=ObjectCreationHandling.Replace,NullValueHandling=NullValueHandling.Ignore)]
+    public HashSet<string> BlockedTargets = new() { "npc:Acacia" };
     public List<Contract> Jobs = new();
     public int LastBoardDay = -1;
     public int NextDispatch, NextSimulatedClaim;
     public int Treasury = 300;
+    // Rebuilt from paid contracts on load, including contracts signed before ranks existed.
+    internal long PlayerMerit;
+    internal int VeteranClears;
+    internal GuildStanding Standing => new(PlayerMerit,VeteranClears);
+
+    internal bool Permits(Contract j) => !BlockedGivers.Contains(j.Issuer) &&
+        !BlockedTargets.Contains(j.Beneficiary) && !BlockedTargets.Contains(j.Patient);
+
+    internal void WithdrawBlockedOffers()
+    {
+        foreach (var j in Jobs.Where(j => j.Stage == Stage.Offered && !Permits(j)))
+        {
+            j.Applicant = null;
+            j.Stage = j.Funded ? Stage.Failed : Stage.Cancelled;
+            if (!j.Funded) Treasury += j.Gold;
+            j.LastReport = j.Funded ? "Withdrawn under the charter. Reclaim your deposit in the journal at the guild counter." :
+                "The guild withdrew this notice under its charter.";
+            j.Events.Add(j.LastReport);
+        }
+    }
 }
 
 public sealed class FieldPost
@@ -119,6 +147,8 @@ public sealed class GuildStore : MonoBehaviour, ISerializableMonoBehavior
     {
         if (r.ReadInt32() != 1) throw new InvalidDataException("Unknown guild save format.");
         Data = JsonConvert.DeserializeObject<Charter>(r.ReadString()) ?? throw new InvalidDataException("Missing charter.");
+        GuildRanks.Restore(Data);
+        Data.WithdrawBlockedOffers();
         var registrar = GetComponent<TurfRegistrar>();
         registrar.OnObjectPoolDestroy();
         registrar.preventRegistration = true;

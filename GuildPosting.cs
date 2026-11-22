@@ -50,7 +50,8 @@ public sealed partial class GuildWindow
             Field(form,AreaLabel(kind),DraftArea(region),()=>Pick(AreaLabel(kind),tiles,DraftArea,region,v=>region=v));
             if (kind==Work.Procurement) art.Label(form,"This region can yield the requested supply this season. A named adventurer who takes the job will report their search tile.",16,Faded);
         }
-        var recipients=Guild.People.Where(n=>Guild.Key(n)!=c.Representative).OrderBy(n=>n.GetFinalName()).Select(Guild.Key).ToList();
+        var recipients=Guild.People.OrderBy(n=>n.GetFinalName()).Select(Guild.Key)
+            .Where(k=>k!=c.Representative && !c.BlockedTargets.Contains(k)).ToList();
         if (kind is not (Work.Escort or Work.Courier)) recipients.Insert(0,Guild.PlayerId);
         if (!recipients.Contains(recipient)) recipient=recipients.FirstOrDefault();
         if (recipient==null) {art.Label(form,"There is no eligible recipient for this request.",18,Faded); return;}

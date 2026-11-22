@@ -58,11 +58,15 @@ internal static class Guild
             X = tile?.position.x ?? 0, Y = tile?.position.y ?? 0, Item = item, Quantity = quantity, Issuer = issuer,
             Beneficiary = beneficiary, ClientName = Name(issuer), RecipientName = Name(beneficiary), Created = Now,
             TargetPrefab = work == Work.Bounty && issuer == GuildId ? Bounties.Choose() : null };
-        job.Gold = gold ?? Quote(job,tile);
+        if (work==Work.Courier && Actor(beneficiary) is NeuralNPC recipient)
+            tile=DungeonGenerationManager.Instance.GetPositionWorldTile(recipient.transform.GetVector2IntPosition());
+        int crossings=tile==null || tile.IsDungeonInstance() ? 0 : Math.Abs(tile.position.x)+Math.Abs(tile.position.y);
+        job.RequiredRank=GuildRanks.Grade(job,crossings);
+        job.Gold = gold ?? Quote(job,crossings);
         return job;
     }
 
-    private static int Quote(Contract job,WorldTile destination)
+    private static int Quote(Contract job,int crossings)
     {
         if (job.Work == Work.Procurement)
         {
@@ -71,15 +75,6 @@ internal static class Guild
             long unitRate = 1L + Math.Max(0,template?.value ?? 0);
             return (int)Math.Min(int.MaxValue,10 + job.Quantity * unitRate);
         }
-        if (job.Work == Work.Courier)
-        {
-            var recipient = Actor(job.Beneficiary);
-            if (recipient) destination = DungeonGenerationManager.Instance.GetPositionWorldTile(recipient.transform.GetVector2IntPosition());
-        }
-        // Silverpine is (0,0). The player crosses world-map borders in four directions.
-        // Dungeon instances have artificial coordinates outside the surface map.
-        int crossings = destination == null || destination.IsDungeonInstance() ? 0 :
-            Math.Abs(destination.position.x) + Math.Abs(destination.position.y);
         return job.Work switch
         {
             Work.Survey or Work.Courier => 16 + 5 * crossings,
@@ -98,28 +93,44 @@ internal static class Guild
         if (tiles.Length == 0) return;
         var residents = People.Where(n => !string.IsNullOrWhiteSpace(n.GetFinalName())).Select(Key)
             .Where(k => k != c.Representative && k != "npc:None").Distinct().ToArray();
+        var targets = residents.Where(k => !c.BlockedTargets.Contains(k)).ToArray();
+        var givers = residents.Where(k => !c.BlockedGivers.Contains(k)).ToArray();
         if (c.LastBoardDay >= 0) c.Treasury = Math.Min(1500, c.Treasury + 120);
         c.LastBoardDay = day;
         foreach (var kind in new[]{Work.Procurement, Work.Survey, Work.Bounty, Work.Courier, Work.Escort})
         {
             if (c.Jobs.Any(j => j.Stage == Stage.Offered && j.Work == kind && !j.Funded)) continue;
-            if (kind is Work.Courier or Work.Escort && residents.Length == 0) continue;
+            if (kind is Work.Courier or Work.Escort && targets.Length == 0) continue;
             var supplies = Goods.Where(g => kind != Work.Procurement || RegionsFor(kind,g).Any()).ToArray();
             if (supplies.Length == 0) continue;
             string item = supplies[Random.Range(0,supplies.Length)];
             var destinations = kind == Work.Procurement ? RegionsFor(kind,item).ToArray() : tiles;
-            string issuer = GuildId, recipient = GuildId;
-            if (residents.Length > 0 && kind is Work.Procurement or Work.Courier or Work.Escort)
+            if (kind==Work.Survey && c.Standing.Rank==GuildRank.Beginner &&
+                c.Jobs.Count(j=>j.Stage==Stage.Offered && !j.Funded && j.Reserved==null && GuildRanks.Requirement(j)==GuildRank.Beginner)<2)
             {
-                recipient = residents[Random.Range(0,residents.Length)];
+                var nearby=tiles.Where(t=>Math.Abs(t.position.x)+Math.Abs(t.position.y)<=3).ToArray();
+                if (nearby.Length>0) destinations=nearby;
+            }
+            string issuer = GuildId, recipient = GuildId;
+            if (targets.Length > 0 && kind is Work.Procurement or Work.Courier or Work.Escort)
+            {
+                recipient = targets[Random.Range(0,targets.Length)];
                 if (kind == Work.Courier)
                 {
-                    var senders = residents.Where(k => k != recipient).ToArray();
+                    var senders = givers.Where(k => k != recipient).ToArray();
                     if (senders.Length > 0) issuer = senders[Random.Range(0,senders.Length)];
                 }
-                else issuer = recipient;
+                else if (!c.BlockedGivers.Contains(recipient)) issuer = recipient;
             }
-            var j = Offer(kind, kind == Work.Courier ? null : destinations[Random.Range(0,destinations.Length)], item, kind == Work.Procurement ? 3 : 1, null, issuer, recipient);
+            var destination=kind==Work.Courier ? null : destinations[Random.Range(0,destinations.Length)];
+            int quantity=1;
+            if (kind==Work.Procurement)
+            {
+                int availableTiers=1+Math.Min((int)c.Standing.Rank,(int)GuildRank.Veteran);
+                quantity=Random.Range(0,availableTiers) switch { 2=>20, 1=>8, _=>3 };
+            }
+            var j=Offer(kind,destination,item,quantity,null,issuer,recipient);
+            if (quantity>3 && j.Gold>c.Treasury) j=Offer(kind,destination,item,3,null,issuer,recipient);
             if (c.Treasury < j.Gold) continue;
             if (kind == Work.Escort) j.Patient = recipient;
             if (kind == Work.Bounty) RollBonus(j);
@@ -135,6 +146,7 @@ internal static class Guild
         var c = GuildStore.Current;
         if (c?.Representative == null || count < 1 || count > 99 || gold <= 0 || Bag.gold < gold) return "Check the quantity, reward, and your purse.";
         if (work == Work.Rescue || !Goods.Contains(item) || work != Work.Courier && !RegionsFor(work,item).Contains(tile)) return "Choose an available contract and region.";
+        if (c.BlockedTargets.Contains(recipient)) return "The charter excludes this resident as a quest target. Choose another beneficiary.";
         if (work is Work.Courier or Work.Escort && (!Actor(recipient) || recipient == c.Representative)) return "Choose an eligible named recipient.";
         if (work is Work.Escort or Work.Courier && reserve == recipient) return "Choose an adventurer other than the recipient.";
         if (prize != null && (!Bag.ContainsItem(prize) || Player.Instance.IsItemEquipped(prize))) return "The bonus item is unavailable.";
@@ -179,8 +191,9 @@ internal static class Guild
 
     internal static bool Eligible(Contract j, string worker)
     {
-        if (j.Stage != Stage.Offered || worker == j.Patient || worker == j.Issuer || j.Work == Work.Courier && worker == j.Beneficiary ||
+        if (j.Stage != Stage.Offered || GuildStore.Current?.Permits(j) == false || worker == j.Patient || worker == j.Issuer || j.Work == Work.Courier && worker == j.Beneficiary ||
             (j.Reserved != null && j.Reserved != worker)) return false;
+        if (worker==PlayerId && (GuildStore.Current==null || GuildStore.Current.Standing.Rank<GuildRanks.Requirement(j))) return false;
         return j.Work != Work.Escort || Expeditions.Free(Actor(j.Patient));
     }
 
@@ -195,11 +208,15 @@ internal static class Guild
         j.Trouble = j.Named && j.Work is not (Work.Courier or Work.Escort or Work.Rescue) && Random.Range(0,100) < 20;
         if (named && j.Work != Work.Courier) StartJourney(j);
         else StartFieldwork(j);
+        if (worker==PlayerId) GuildApi.Sign(j,GuildStore.Current);
         var clerk = named ? Actor(GuildStore.Current.Representative) : null;
         string signature = clerk ? $" {clerk.GetFinalName()} took the signature at the guild counter." : "";
+        if (j.SkillGold>0 || j.SkillMerit>0)
+            signature+=$" The signed terms include {j.Payout} gold and {GuildRanks.Merit(j)} merit.";
         Event(j, $"{j.WorkerName} accepted {j.Title} for {j.ClientName}." + signature, true);
         if (clerk && Key(clerk)!=j.Issuer) clerk.AddThingThatHappened(j.LastReport);
         if (j.TargetPrefab != null) Bounties.Place(j);
+        if (worker==PlayerId) GuildApi.Accepted(j,GuildStore.Current);
         return true;
     }
 
@@ -262,7 +279,7 @@ internal static class Guild
         {
             var goods = Bag.items.Where(i => i.name == j.Item).Take(j.Quantity).ToList();
             if (goods.Count != j.Quantity) return "You need all the requested supplies.";
-            if (j.Gold > int.MaxValue - Bag.gold) return "Your purse is full.";
+            if (j.Payout > int.MaxValue - Bag.gold) return "Your purse is full.";
             // Submit goods only once, even if the reward item has to wait at the counter.
             if (j.Beneficiary != GuildId) j.Cargo.AddRange(goods.Select(Pack).ToArray());
             foreach (var i in goods) Bag.RemoveItem(i);
@@ -276,19 +293,29 @@ internal static class Guild
     internal static string Settle(Contract j)
     {
         if (j.Stage != Stage.Returning || j.Paid) return "Already processed.";
+        var charter=GuildStore.Current;
+        var previous=charter.Standing.Rank;
         if (j.Worker == PlayerId)
         {
-            if (j.Gold > int.MaxValue - Bag.gold || !Grant(Bag,j.Prize,j.Gold)) return "Make room to receive the reward.";
-            Bag.gold += j.Gold;
+            if (j.Payout > int.MaxValue - Bag.gold || !Grant(Bag,j.Prize,j.Payout)) return "Make room to receive the reward.";
+            Bag.gold += j.Payout;
         }
         j.Paid = true;
         j.Remaining = j.Work == Work.Procurement && (j.Funded || j.Beneficiary != GuildId) ? j.Quantity : 0;
         j.Stage = j.Remaining > 0 ? Stage.Delivered : Stage.Closed;
-        Event(j, $"{j.WorkerName} completed {j.Title} for {j.ClientName}. The guild awarded {j.Gold} gold" +
-            (j.Prize == null ? "." : $" and {j.PrizeName}."), true);
+        string standing="";
+        if (j.Worker==PlayerId)
+        {
+            GuildRanks.Credit(charter,j);
+            standing=$" Earned {GuildRanks.Merit(j)} guild merit.";
+            if (charter.Standing.Rank>previous) standing+=$" The guild promoted {j.WorkerName} to {charter.Standing.Rank}.";
+        }
+        Event(j, $"{j.WorkerName} completed {j.Title} for {j.ClientName}. The guild awarded {j.Payout} gold" +
+            (j.Prize == null ? "." : $" and {j.PrizeName}.")+standing, true);
         var rep = Actor(GuildStore.Current.Representative);
         if (rep && Key(rep) != j.Issuer) rep.AddThingThatHappened(j.LastReport);
         if (j.Stage == Stage.Delivered && !j.Funded) Collect(j);
+        if (j.Worker==PlayerId) GuildApi.Completed(j,charter,previous);
         return j.LastReport;
     }
     internal static string Collect(Contract j)

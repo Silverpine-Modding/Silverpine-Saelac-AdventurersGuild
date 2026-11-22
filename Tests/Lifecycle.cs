@@ -46,7 +46,7 @@ internal static class Lifecycle
         yield return Until(()=> (bool)AccessTools.Property(Return,"CanReturn").GetValue(null),"Enable return to main menu");
         yield return (IEnumerator)AccessTools.Method(Return,"Return").Invoke(null,null);
         yield return Frames(20);
-        Runner.Verify(MainMenuUI.Instance.IsOpen() && !Guild.Ready && GuildStore.Current == null,"Return removes the old charter and pauses guild work at main menu");
+        Runner.Verify(MainMenuUI.Instance.IsOpen() && !Guild.Ready && GuildStore.Current == null && GuildApi.PlayerStanding==null,"Return removes the old charter and pauses guild work at main menu");
     }
     internal static IEnumerator Exercise()
     {
@@ -66,6 +66,9 @@ internal static class Lifecycle
         first.Representative=Guild.Key(worker);
         Guild.Stock(first);
         string contract=first.Jobs.First().Id;
+        var supply=first.Jobs.Single(j=>j.Work==Work.Procurement);
+        Runner.Verify(Guild.Accept(supply,Guild.PlayerId),"Player can sign after guild bootstrap destruction");
+        supply.Stage=Stage.Returning; Guild.Settle(supply);
         Runner.Verify(PartyBridge.Pay(worker,"lifecycle-test",120,null),"Optional companion API works after bootstrap destruction");
         var runtimeType=AccessTools.TypeByName("CompanionParty.PartyRuntime");
         var old=Player.Instance.GetComponent(runtimeType);
@@ -90,11 +93,13 @@ internal static class Lifecycle
         yield return Frames(2);
         Runner.Verify(GuildStore.Create().Jobs.Count==0 && SerializablePrefabs.TryGetRegistration("adventurersguild_charter",out registration) && registration.Template,
             "Lost charter template is recreated before a new world needs it");
+        Runner.Verify(GuildApi.PlayerStanding.Merit==0,"A new world's player starts with a fresh guild standing");
         yield return ToMenu();
         SaveUI.Instance.Continue();
         yield return Until(()=>!MainMenuUI.Instance.IsOpen() && !SerializationManager.loadingSave && !BlackScreen.Instance.IsActive(),"Continue first save");
         yield return Frames(25);
         Runner.Verify(Guild.Find(contract)!=null && Player.Instance.playerName=="Rowan","Continue restores first charter after two menu returns");
+        Runner.Verify(GuildApi.PlayerStanding.Merit==2,"The skills API follows the original player's standing after Continue");
         worker=Guild.Actor(GuildStore.Current.Representative);
         var person=AccessTools.Method(state,"Get").Invoke(null,new object[]{worker});
         Runner.Verify((int)person.GetType().GetProperty("Gold").GetValue(person)==120,"Continue restores personal gold on the restored NPC");

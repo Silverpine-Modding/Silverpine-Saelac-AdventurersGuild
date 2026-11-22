@@ -11,7 +11,7 @@ using UnityEngine;
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("AdventurersGuild.Checks")]
 namespace AdventurersGuild;
 
-[BepInPlugin(Id,"Adventurers’ Guild","1.5.2")]
+[BepInPlugin(Id,"Adventurers’ Guild","1.7.0")]
 [BepInDependency("Saelac.Silverpine.ModdingTools","1.13.0")]
 [BepInDependency(PartyBridge.Id,BepInDependency.DependencyFlags.SoftDependency)]
 public sealed class Plugin : BaseUnityPlugin
@@ -55,7 +55,7 @@ public sealed class Plugin : BaseUnityPlugin
         var k = Guild.Key(n);
         var lines = c.Jobs.AsEnumerable().Reverse().Where(j => j.Issuer != k && j.Stage != Stage.Offered &&
             (j.Worker == k || j.Patient == k || j.Beneficiary == k && (j.Paid || j.Work == Work.Courier && j.Progress > 0))).Take(4)
-            .Select(j => $"{j.Title}. Commissioned by {j.ClientName} for {j.RecipientName}. Assigned to {j.WorkerName} for {j.Gold} gold. " +
+            .Select(j => $"{j.Title}. Commissioned by {j.ClientName} for {j.RecipientName}. Assigned to {j.WorkerName} for {j.Payout} gold. " +
                 (j.Worker == k ? $"Assignment: {j.Stage}. Progress {j.Progress}/{j.Quantity}. " + string.Join(" ",j.Events.Skip(Math.Max(0,j.Events.Count-3))) :
                 j.Patient == k ? "My status: " + j.Stage : j.LastReport));
         var requests = RequestsBy(c,k);

@@ -142,7 +142,7 @@ public sealed partial class GuildWindow : ModToolBehaviour
             Position((RectTransform)button.transform,index++*146,0,136,38);
         }
         var c=GuildStore.Current;
-        purse.text=Guild.Ready ? $"{Guild.Bag.gold:N0} gold in purse" : "";
+        purse.text=Guild.Ready ? (c==null ? "" : $"Guild rank · {c.Standing.Rank}\n")+$"{Guild.Bag.gold:N0} gold in purse" : "";
         status.text=message.Length>0 ? message : c?.Representative==null ? "The charter is open for appointments." : "Guild representative   ·   "+Guild.Name(c.Representative);
         if (tab=="Charter") CharterPage(c);
         else if (c?.Representative==null) Note("Guild office","Appoint a representative in Charter to begin posting requests.");
@@ -172,7 +172,7 @@ public sealed partial class GuildWindow : ModToolBehaviour
 
     private void CharterPage(Charter c)
     {
-        var info=Note("Guild charter","Appoint a representative and enroll residents for expeditions. To place a board, write Adventurers Guild on a sign.");
+        var info=Note("Guild charter","Appoint a representative and enroll adventurers. Click a quest role to allow or block it. This withdraws affected unclaimed requests. Signed jobs continue. To place a board, write Adventurers Guild on a sign.");
         if (c!=null)
         {
             art.Label(info,c.Treasury < 0 ? $"Outstanding rescue advance  ·  {-(long)c.Treasury} gold" : $"Treasury  ·  {c.Treasury} gold",19,Ink);
@@ -202,13 +202,15 @@ public sealed partial class GuildWindow : ModToolBehaviour
             scroll.StopMovement(); scroll.verticalNormalizedPosition=1;
         });
         empty.transform.SetAsLastSibling();
+        var policy=c ?? new Charter();
         foreach (var npc in Guild.People.OrderBy(n=>n.GetFinalName()).ToArray())
         {
             var k=Guild.Key(npc);
             var row=art.Sheet(content,npc.GetFinalName(),16);
             bool member=c?.Members.Contains(k)==true;
             string role=c?.Representative==k ? "guild representative" : member ? "enrolled adventurer" : "resident";
-            residents.Add((row.gameObject,npc.GetFinalName()+" "+role));
+            bool giverBlocked=policy.BlockedGivers.Contains(k), targetBlocked=policy.BlockedTargets.Contains(k);
+            residents.Add((row.gameObject,npc.GetFinalName()+" "+role+(giverBlocked ? " blocked giver" : "")+(targetBlocked ? " blocked target" : "")));
             var controls=Node(row,"Resident"); Stack(controls,true,gap:14);
             long earned=c?.Jobs.Where(j=>j.Paid && j.Worker==k).Sum(j=>(long)j.Gold) ?? 0;
             Size(art.Label(controls,npc.GetFinalName()+(earned>0 ? $"   ·   {earned} gold earned" : ""),20,Ink).rectTransform,grow:true);
@@ -226,11 +228,28 @@ public sealed partial class GuildWindow : ModToolBehaviour
                     return "Roster updated.";
                 }).transform,222,34);
             }
+            var rules=Node(row,"Quest roles"); Stack(rules,true,gap:14);
+            Size((RectTransform)ActionButton(rules,giverBlocked ? "Quest giver · blocked" : "Quest giver · allowed",
+                ()=>ToggleQuestRole(k,true)).transform,228,34);
+            Size((RectTransform)ActionButton(rules,targetBlocked ? "Quest target · blocked" : "Quest target · allowed",
+                ()=>ToggleQuestRole(k,false)).transform,228,34);
         }
         Filter(charterSearch);
     }
+    private static string ToggleQuestRole(string key,bool giver)
+    {
+        var c=GuildStore.Create();
+        var list=giver ? c.BlockedGivers : c.BlockedTargets;
+        bool blocked=list.Add(key);
+        if (blocked) c.WithdrawBlockedOffers();
+        else list.Remove(key);
+        string change=Guild.Name(key)+(blocked ? " is excluded" : " is allowed")+(giver ? " as a quest giver." : " as a quest target.");
+        RecordAction(change);
+        return change;
+    }
     private void BoardPage(Charter c,bool journal)
     {
+        if (journal) Note("Guild standing",c.Standing.Summary+"\nEarn merit by turning in contracts you complete for the guild. Harder assignments earn more.");
         var jobs=c.Jobs.Where(j=>journal ? j.Worker==Guild.PlayerId || j.Funded || j.Paid : j.Open || j.Stage==Stage.Offered).Reverse().ToArray();
         if (!Desk && !journal && message.Length==0) status.text="Visit the representative or a guild sign to accept or commission work.";
         if (jobs.Length==0) { Note(journal ? "Your journal is empty" : "No requests posted"); return; }
@@ -246,9 +265,13 @@ public sealed partial class GuildWindow : ModToolBehaviour
                 var line=Node(paper,"Notice heading"); Stack(line,true,gap:10);
                 var kindLabel=art.Label(line,WorkName(j.Work).ToUpperInvariant(),14,Faded);
                 kindLabel.characterSpacing=8; Size(kindLabel.rectTransform,grow:true);
-                var reward=art.Label(line,$"{j.Gold} gold"+(j.Prize==null ? "" : " + "+j.PrizeName),18,Ink);
+                var reward=art.Label(line,$"{j.Payout} gold"+(j.Prize==null ? "" : " + "+j.PrizeName),18,Ink);
                 reward.fontStyle=FontStyles.Bold;
                 art.Label(paper,j.Title,23,Ink,true);
+                string grade=$"{GuildRanks.Requirement(j)} rank";
+                if (!j.Funded && (j.Worker==null || j.Worker==Guild.PlayerId)) grade+=$" · {GuildRanks.Merit(j)} merit";
+                if (j.SkillGold>0) grade+=$" · Includes {j.SkillGold} skill bonus gold";
+                art.Label(paper,grade,16,Faded);
                 art.Label(paper,Instructions(j),17,Ink);
                 string byline="Posted by "+j.ClientName;
                 if (j.Issuer!=j.Beneficiary) byline+="   ·   For "+j.RecipientName;
@@ -266,8 +289,13 @@ public sealed partial class GuildWindow : ModToolBehaviour
                 if (Desk && j.Stage==Stage.Offered && !j.Funded && j.Reserved==null)
                 {
                     var signature=Node(paper,"Signature"); Stack(signature,true);
-                    var accept=ActionButton(signature,"Accept contract",()=>Guild.Accept(j,Guild.PlayerId) ? "Accepted. Your journal has the details." : "The traveler is currently unavailable.");
-                    Size((RectTransform)accept.transform,167,34);
+                    if (c.Standing.Rank<GuildRanks.Requirement(j))
+                        art.Label(signature,"Requires "+GuildRanks.Requirement(j)+" rank to sign.",16,Ink);
+                    else
+                    {
+                        var accept=ActionButton(signature,"Accept contract",()=>Guild.Accept(j,Guild.PlayerId) ? "Accepted. Your journal has the details." : "This contract is currently unavailable.");
+                        Size((RectTransform)accept.transform,167,34);
+                    }
                 }
                 if (Desk && j.Funded && j.Stage is Stage.Offered or Stage.Failed)
                     ActionButton(paper,"Withdraw and reclaim deposit",()=>Guild.Cancel(j));

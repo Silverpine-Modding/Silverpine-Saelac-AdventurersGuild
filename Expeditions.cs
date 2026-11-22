@@ -108,7 +108,13 @@ internal static partial class Expeditions
             if (Guild.Now > j.Due + 2880 && Roles(j).Any(k => !Guild.Actor(k))) Fail(j);
             return;
         }
-        if (j.Stage == Stage.Stranded) return;
+        if (j.Stage == Stage.Stranded)
+        {
+            // A withdrawn rescue never pays out; its already signed parent can still finish.
+            var rescue = c.Jobs.LastOrDefault(r => r.Parent == j.Id);
+            if (rescue?.Stage == Stage.Cancelled) ResumeExpedition(j,"The guild arranged assistance for " + j.WorkerName + ".");
+            return;
+        }
         if (j.Stage == Stage.Travelling)
         {
             var traveller = Guild.Actor(j.Worker);
@@ -237,17 +243,28 @@ internal static partial class Expeditions
         {
             var parent = Guild.Find(j.Parent);
             if (parent?.Stage != Stage.Stranded) return;
-            PartyBridge.Assist(Guild.Actor(j.Patient));
-            parent.Stage = Stage.Active; parent.Trouble = false; parent.Due = Guild.Now + 180;
-            if (parent.Work == Work.Procurement) ScheduleGather(parent);
-            Guild.Event(parent,j.WorkerName + " helped " + parent.WorkerName + " return to their assignment.",true);
+            ResumeExpedition(parent,j.WorkerName + " helped " + parent.WorkerName + " return to their assignment.");
         }
         j.Progress = j.Quantity; j.Stage = Stage.Returning; j.Due = Guild.Now + 45;
         Guild.Event(j,j.WorkerName + " completed the fieldwork for " + j.Title + ".");
     }
+    private static void ResumeExpedition(Contract job,string report)
+    {
+        var worker = Guild.Actor(job.Worker);
+        if (worker) PartyBridge.Assist(worker);
+        job.Stage = Stage.Active; job.Trouble = false; job.Due = Guild.Now + 180;
+        if (job.Work == Work.Procurement) ScheduleGather(job);
+        Guild.Event(job,report,true);
+    }
+
     private static void Strand(Charter c, Contract j)
     {
         if (j.Stage != Stage.Active) return;
+        if (c.BlockedTargets.Contains(j.Worker))
+        {
+            ResumeExpedition(j,"The guild arranged assistance for " + j.WorkerName + ".");
+            return;
+        }
         j.Stage = Stage.Stranded;
         string note = j.WorkerName + " missed their check-in from " + j.Region + ".";
         Guild.Event(j,note,true);
@@ -261,7 +278,7 @@ internal static partial class Expeditions
     {
         if (!j.Open && j.Stage != Stage.Offered) return;
         j.Stage = Stage.Failed;
-        if (!j.Funded) GuildStore.Current.Treasury += j.Gold;
+        if (!j.Funded) GuildStore.Current.Treasury += j.Payout;
         Guild.Event(j,$"The guild could not complete “{j.Title}”.",true);
         foreach (var child in GuildStore.Current.Jobs.Where(k => k.Parent == j.Id && (k.Open || k.Stage == Stage.Offered)).ToArray()) Fail(child);
     }
@@ -271,7 +288,8 @@ internal static partial class Expeditions
         if (!Guild.Near(n)) return "Move closer.";
         var c = GuildStore.Current; string k = Guild.Key(n);
         var rescue = c.Jobs.FirstOrDefault(j => j.Work == Work.Rescue && j.Patient == k && j.Stage == Stage.Offered);
-        if (rescue != null) Guild.Accept(rescue,Guild.PlayerId);
+        if (rescue != null && !Guild.Accept(rescue,Guild.PlayerId) && c.Standing.Rank<GuildRanks.Requirement(rescue))
+            return $"The guild requires {GuildRanks.Requirement(rescue)} rank to sign this rescue.";
         var pickup = c.Jobs.FirstOrDefault(j => j.Worker == Guild.PlayerId && j.Stage == Stage.Active && j.Patient == k && Guild.InRegion(j));
         if (pickup != null)
         {

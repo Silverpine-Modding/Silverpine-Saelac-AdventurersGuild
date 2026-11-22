@@ -23,6 +23,7 @@ internal static class GuildLedger
             .ThenByDescending(r => r.Job.Stage == Stage.Offered)
             .Take(6).Select(r => r.Job);
         return "You are the Adventurers’ Guild representative. You know the people and assignments described in the guild ledger through your work, even if you have never met them. Answer guild questions from these records.\n" +
+            "Silverpine is a branch of the Thalassar Adventuring Guild. Beginners take easy jobs such as gathering and hunting weak monsters. Intermediate members can take more dangerous work. Veterans can sign the hardest public contracts. You handle promotions when completed work is paid. Under this charter joining is free, posters deposit the promised reward, and the player may sign multiple contracts. The player's standing is "+charter.Standing.Summary+".\n"+
             Describe(charter, records);
     }
 
@@ -78,7 +79,7 @@ internal static class GuildLedger
         var people = new HashSet<string>();
         foreach (var j in jobs)
         {
-            string reward = j.Gold + " gold" + (string.IsNullOrEmpty(j.PrizeName) ? "" : " and " + j.PrizeName);
+            string reward = j.Payout + " gold" + (string.IsNullOrEmpty(j.PrizeName) ? "" : " and " + j.PrizeName);
             string claim = j.Worker == null ? "No claimant." : "Accepted by " + j.WorkerName + ".";
             string status = j.Stage switch {
                 Stage.Offered when j.Reserved != null => "Reserved for " + (Guild.Actor(j.Reserved)?.GetFinalName() ?? j.Reserved.Substring(j.Reserved.IndexOf(':') + 1)) + ".",
@@ -93,7 +94,7 @@ internal static class GuildLedger
                 Stage.Failed => "Failed.",
                 _ => "Underway."
             };
-            lines.Add($"{Heading(j)} {Objective(charter, j)} {claim} {status} Reward: {reward}.");
+            lines.Add($"{Heading(j)} {Objective(charter, j)} {claim} {status} Player signing rank: {GuildRanks.Requirement(j)}. Reward: {reward}.");
             if (!string.IsNullOrWhiteSpace(j.LastReport)) lines.Add("Last filed report: " + j.LastReport);
             foreach (var key in new[] { j.Beneficiary, j.Issuer, j.Worker })
             {

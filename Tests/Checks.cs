@@ -80,6 +80,16 @@ public sealed class Runner : MonoBehaviour
         c.Representative = Guild.Key(rep); c.Members.Add(Guild.Key(worker));
         Guild.Stock(c);
         Check(c.Jobs.Select(j=>j.Work).Distinct().Count() == 5,"Board stocks five types of contract");
+        if (Environment.GetCommandLineArgs().Contains("-guild-ranks"))
+        {
+            yield return RankChecks.Exercise(c,rep,worker);
+            yield break;
+        }
+        if (Environment.GetCommandLineArgs().Contains("-role-exclusions"))
+        {
+            yield return QuestRoleChecks.Exercise(c,worker);
+            yield break;
+        }
         if (Environment.GetCommandLineArgs().Contains("-guild-escort-return"))
         {
             yield return TileReturnChecks.Exercise(c,worker,rep);
@@ -213,6 +223,13 @@ public sealed class Runner : MonoBehaviour
         Check(rescue.Stage==Stage.Returning && job.Stage==Stage.Active,"Rescue returns both actors and resumes parent");
         map.EnterWorldTile(tile.position,tile.position*100);
         worker=Guild.Actor(workerKey);
+        object WorkerPurse() => AccessTools.Method(AccessTools.TypeByName("CompanionParty.State"),"Get").Invoke(null,new object[]{worker});
+        (int Gold,int BonusCount) RewardBalance(object person) => (
+            (int)person.GetType().GetProperty("Gold").GetValue(person),
+            ((IList)person.GetType().GetField("Items").GetValue(person)).Cast<object>()
+                .Count(entry=>(string)entry.GetType().GetField("Name").GetValue(entry)==job.PrizeName));
+        var openingBalance=PartyBridge.Pay==null ? (Gold:0,BonusCount:0) : RewardBalance(WorkerPurse());
+        var paidBalance=(openingBalance.Gold+job.Gold,openingBalance.BonusCount+1);
         spot=PathfindingEntity.FindFreeTurfsAroundPosition(worker.transform.GetVector2IntPosition()).First();
         var finalPlant=UnityEngine.Object.Instantiate(Resources.Load<GameObject>("Prefabs/"+herb),new Vector3(spot.x,spot.y,0),Quaternion.identity).GetComponent<ResourceNode>();
         finalPlant.OnNPCInteract(worker).GetAwaiter().GetResult();
@@ -226,10 +243,10 @@ public sealed class Runner : MonoBehaviour
             Guild.Bag.items.Count(i=>i.name==supply)==beforeDelivery+3,"Three physical and offscreen goods collected exactly once");
         if (PartyBridge.Pay != null)
         {
+            var p=WorkerPurse();
+            Check(RewardBalance(p)==paidBalance,"Settlement adds exactly the promised gold and bonus to the worker's existing inventory");
             Check(PartyBridge.Pay(worker,job.Id,job.Gold,job.Prize),"Companion reward receipt can be replayed");
-            var state=AccessTools.TypeByName("CompanionParty.State");
-            var p=AccessTools.Method(state,"Get").Invoke(null,new object[]{worker});
-            Check((int)p.GetType().GetProperty("Gold").GetValue(p)==120 && ((IList)p.GetType().GetField("Items").GetValue(p)).Count==1,"Named worker receives exactly one purse credit and one item");
+            Check(RewardBalance(p)==paidBalance,"Replaying the receipt leaves the worker's gold and bonus count unchanged");
             Check(!(bool)p.GetType().GetField("Recruited").GetValue(p),"Field assignment never recruits worker");
             c.Members.Remove(workerKey);
             var world=WorldInfoManager.Instance;
@@ -248,8 +265,7 @@ public sealed class Runner : MonoBehaviour
             Expeditions.Reset(); Expeditions.Tick();
             var api=AccessTools.TypeByName("CompanionParty.PartyApi");
             Check((bool)AccessTools.Method(api,"Recruit").Invoke(null,new object[]{worker}),"Darian recruited eight days after his guild payout");
-            p=AccessTools.Method(state,"Get").Invoke(null,new object[]{worker});
-            Check((int)p.GetType().GetProperty("Gold").GetValue(p)==120 && ((IList)p.GetType().GetField("Items").GetValue(p)).Count==1,"Personal 120 gold and one bonus item survive eight midnights, save/load and recruitment without purchases");
+            Check(RewardBalance(WorkerPurse())==paidBalance,"Personal 120 gold and one bonus item survive eight midnights, save/load and recruitment without purchases");
             AccessTools.Method(api,"Dismiss").Invoke(null,new object[]{worker});
         }
         else Check(PartyBridge.Pay==null,"Guild works without Companion Party");

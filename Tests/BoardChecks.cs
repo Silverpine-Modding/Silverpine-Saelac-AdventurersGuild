@@ -18,6 +18,7 @@ internal static class BoardChecks
         var player=Player.Instance;
         CheckGoldOffers(c);
         CheckDispatch(c);
+        c.PlayerMerit=24; // Exercise a bounty anywhere on the map.
         var counter=Traverse.Create(player).Field("inputBlockCount");
         int before=counter.GetValue<int>();
         var job=c.Jobs.Single(j=>j.Work==Work.Bounty);
@@ -348,7 +349,7 @@ internal static class BoardChecks
         var clock=AccessTools.PropertySetter(typeof(WorldInfoManager),"TotalTurnCount");
         void At(int hours)=>clock.Invoke(WorldInfoManager.Instance,new object[]{start+hours*120});
         var c=new Charter{Representative=original.Representative,Roster=Roster.Simulated};
-        var tile=Guild.Regions.First();
+        var tile=Guild.Regions.OrderBy(t=>t.position.sqrMagnitude).First();
         GuildStore.Instance.Data=c;
         try
         {
